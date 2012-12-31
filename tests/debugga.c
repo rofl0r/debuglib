@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
 				
 			}
 		}
-		if((de = get_debugger_events(&dbga, child, &retval)) != DE_NONE) {
+		if((de = debugger_get_events(&dbga, child, &retval, 0)) != DE_NONE) {
 			printf("got a debugger event, retval %d\n", retval);
 			if(de == DE_EXIT) {
 				puts("child exited.");
