@@ -1,0 +1,30 @@
+Copyright (C) 2011-2013 rofl0r
+
+all source files are original works of rofl0r.
+
+they are licensed under the LGPL 2.1+ (see COPYING),
+
+BUT with the "NO-C++" exception. 
+
+that means you are not allowed to translate the code
+into C++, but you can happily link against it from C++.
+
+this measure was taken to preclude C++ trolls from
+luring the maintainers into converting the code
+into inferior C++. this happened in the past with
+lots of C projects, for example MAME. the most recent
+project destroyed in such a manner is GCC.
+
+C++ trolls try to convince maintainers of C projects
+that C++ is more modern, nicer to use and fitter for
+large-scale codebases or better reusable.
+none of these claims is true.
+
+The only beneficiaries of such a change (besides the
+C++ trolls which don't understand C at all, and prefer to
+code in a wasteful and bloated OOP manner) are CPU and RAM
+vendors:
+since C++ compiles much slower, it gives you the feeling
+that your system is too slow and you must update.
+the wasteful OOP style and vtable overhead will lead
+to higher memory usage.
