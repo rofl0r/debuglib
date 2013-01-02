@@ -82,12 +82,29 @@ const char* debugger_get_event_name(debugger_event de) {
 }
 
 void debugger_state_init(debugger_state* state) {
-	state->breakpoints = hashlist_new(64, sizeof(breakpointinfo));
-	state->processmaps = NULL;
-	state->syscall_ret = 0;
+	state->pids = sblist_new(sizeof(pidinfo), 8);
 }
 
-static breakpointinfo* get_bpinfo(debugger_state* state, void* addr) {
+size_t debugger_get_pidcount(debugger_state* d) {
+	return sblist_getsize(d->pids);
+}
+
+pid_t debugger_pid_from_pidindex(debugger_state* d, size_t index) {
+	if(index > sblist_getsize(d->pids)) return -1;
+	pidinfo* ret = sblist_get(d->pids, index);
+	return ret->pid;
+}
+
+ssize_t debugger_pidindex_from_pid(debugger_state* d, pid_t pid) {
+	pidinfo* ret;
+	sblist_iter_counter(d->pids, i, ret) {
+		if(ret->pid == pid) return i;
+	}
+	return -1;
+}
+
+static breakpointinfo* get_bpinfo(pidinfo* state, void* addr) {
+	if(!state->breakpoints) goto out;
 	breakpointinfo* bp = NULL;
 	sblist* bucket;
 	bucket = hashlist_get(state->breakpoints, (uint32_t) (size_t) addr);
@@ -96,19 +113,21 @@ static breakpointinfo* get_bpinfo(debugger_state* state, void* addr) {
 			if(bp->addr == addr) return bp;
 		}
 	}
+	out:
 	return NULL;
 }
 
-static breakpointinfo* add_new_bpinfo(debugger_state* state, void* addr) {
+static breakpointinfo* add_new_bpinfo(pidinfo* state, void* addr) {
 	breakpointinfo new_bp = {
 		.addr = addr,
 		.bp_instr_size = ARCH_BP_INSTR_SIZE,
 		.bp_backup = {0},
 		.active = 0,
 	};
+	if(!state->breakpoints) state->breakpoints = hashlist_new(64, sizeof(breakpointinfo));
 	if(!hashlist_add(state->breakpoints, (uint32_t) (size_t) addr, &new_bp))
 		return get_bpinfo(state, addr);
-	else return NULL;
+	return NULL;
 }
 
 static void restore_breakpoint_mem(pid_t pid, breakpointinfo* bp) {
@@ -125,15 +144,20 @@ static int activate_breakpoint(pid_t pid, breakpointinfo* bp) {
 	return 1;
 }
 
-int debugger_set_breakpoint(debugger_state* state, pid_t pid, void* addr) {
-	breakpointinfo* bp = get_bpinfo(state, addr);
+static inline pidinfo* get_pidinfo(debugger_state* state, size_t pidindex) {
+	return sblist_get(state->pids, pidindex);
+}
+
+int debugger_set_breakpoint(debugger_state* state, size_t pidindex, void* addr) {
+	pidinfo *pi = get_pidinfo(state, pidindex);
+	breakpointinfo* bp = get_bpinfo(pi, addr);
 	if(!bp) {
-		bp = add_new_bpinfo(state, addr);
+		bp = add_new_bpinfo(pi, addr);
 	} else if (bp->active) {
-		printf("breakpoint %p is already active\n", addr);
+		dprintf(2, "breakpoint %p is already active\n", addr);
 		return 0;
 	}
-	return activate_breakpoint(pid, bp);
+	return activate_breakpoint(pi->pid, bp);
 	/*
 	map_data* dest = find_map_for_addr(processmaps, bp->addr);
 	if(!dest) {
@@ -145,7 +169,7 @@ int debugger_set_breakpoint(debugger_state* state, pid_t pid, void* addr) {
 	*/
 }
 
-void* get_instruction_pointer(pid_t pid) {
+static void* get_instruction_pointer(pid_t pid) {
 	long ret;
 	errno = 0;
 	ret = ptrace(PTRACE_PEEKUSER, pid, WORD_SIZE * ARCH_IP, NULL);
@@ -156,7 +180,12 @@ void* get_instruction_pointer(pid_t pid) {
 	return (void*) ret;
 }
 
-int set_instruction_pointer(pid_t pid, void* addr) {
+void* debugger_get_ip(debugger_state* d, size_t pidindex) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
+	return get_instruction_pointer(pi->pid);
+}
+
+static int set_instruction_pointer(pid_t pid, void* addr) {
 	long ret;
 	ret = ptrace(PTRACE_POKEUSER, pid, WORD_SIZE * ARCH_IP, addr);
 	if(ret == -1) {
@@ -164,6 +193,11 @@ int set_instruction_pointer(pid_t pid, void* addr) {
 		return 0;
 	}
 	return 1;
+}
+
+int debugger_set_ip(debugger_state* d, size_t pidindex, void* addr) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
+	return set_instruction_pointer(pi->pid, addr);
 }
 
 static int set_debug_options(pid_t pid) {
@@ -184,18 +218,33 @@ static int set_debug_options(pid_t pid) {
 	return 1;
 }
 
-int attach_process(pid_t pid) {
+void debugger_add_pid(debugger_state* d, pid_t pid) {
+	pidinfo pi = {0};
+	pi.pid = pid;
+	sblist_add(d->pids, &pi);
+}
+
+void debugger_set_pid(debugger_state *d, size_t pidindex, pid_t pid) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
+	pi->pid = pid;
+}
+
+int debugger_attach(debugger_state *d, pid_t pid) {
 	if(ptrace(PTRACE_ATTACH, pid, NULL, NULL) == -1) {
 		perror("ptrace attach");
 		return 0;
 	}
+	debugger_add_pid(d, pid);
 	return set_debug_options(pid);
 }
 
-pid_t start_debuggee(char* path, char** args, char** env) {
+size_t debugger_exec(debugger_state* d, char* path, char** args, char** env) {
 	pid_t result = fork();
+	errno = 0;
 	if(result == 0) {
-		ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+		if(ptrace(PTRACE_TRACEME, 0, NULL, NULL) == -1) {
+			perror("ptrace_traceme");
+		}
 		if(execve(path, args, env) == -1) {
 			perror("execve");
 			_exit(1);
@@ -203,15 +252,20 @@ pid_t start_debuggee(char* path, char** args, char** env) {
 	} else if (result == -1) {
 		perror("fork");
 		ret_err:
-		return (pid_t) -1;
+		return -1;
 	}
-	msleep(40); // give the new process a chance to startup
-	if(set_debug_options(result)) return result;
+	msleep(100); // give the new process a chance to startup
+	if(set_debug_options(result)) {
+		debugger_add_pid(d, result);
+		return sblist_getsize(d->pids) - 1;
+	}
 	goto ret_err;
 }
 
-int debugger_wait_syscall(debugger_state* state, pid_t pid) {
-	if(ptrace(PTRACE_SYSCALL, pid, 0, 0) == -1) {
+int debugger_wait_syscall(debugger_state* d, size_t pidindex) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
+	if(ptrace(PTRACE_SYSCALL, pi->pid, 0, 0) == -1) {
+		dprintf(2, "ptrace pid %d\n", (int) pi->pid);
 		perror("ptrace_syscall");
 		return 0;
 	}
@@ -219,7 +273,8 @@ int debugger_wait_syscall(debugger_state* state, pid_t pid) {
 	return 1;
 }
 
-long debugger_get_syscall_number(debugger_state* state, pid_t pid) {
+long debugger_get_syscall_number(debugger_state* d, size_t pidindex) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
 #if 0
 	long ret;
 	errno = 0;
@@ -231,7 +286,7 @@ long debugger_get_syscall_number(debugger_state* state, pid_t pid) {
 	return ret;
 #else
 	struct user_regs_struct regs;
-	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
+	if(ptrace(PTRACE_GETREGS, pi->pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
 		return -1;
 	}
@@ -239,9 +294,10 @@ long debugger_get_syscall_number(debugger_state* state, pid_t pid) {
 #endif
 }
 
-long debugger_get_syscall_arg(debugger_state *d, pid_t pid, int argno) {
+long debugger_get_syscall_arg(debugger_state *d, size_t pidindex, int argno) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
 	struct user_regs_struct regs;
-	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
+	if(ptrace(PTRACE_GETREGS, pi->pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
 		return -1;
 	}
@@ -259,9 +315,10 @@ long debugger_get_syscall_arg(debugger_state *d, pid_t pid, int argno) {
 	}
 }
 
-void debugger_set_syscall_arg(debugger_state *d, pid_t pid, int argno, unsigned long nu) {
+void debugger_set_syscall_arg(debugger_state *d, size_t pidindex, int argno, unsigned long nu) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
 	struct user_regs_struct regs;
-	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
+	if(ptrace(PTRACE_GETREGS, pi->pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
 		return;
 	}
@@ -278,20 +335,21 @@ void debugger_set_syscall_arg(debugger_state *d, pid_t pid, int argno, unsigned 
 			return;
 	}
 	
-	if(ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1) {
+	if(ptrace(PTRACE_SETREGS, pi->pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
 		return;
 	}
 }
 
-void debugger_set_syscall_number(debugger_state * state, pid_t pid, long scnr) {
+void debugger_set_syscall_number(debugger_state * d, size_t pidindex, long scnr) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
 	struct user_regs_struct regs;
-	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
+	if(ptrace(PTRACE_GETREGS, pi->pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
 		return;
 	}
 	regs.ARCH_SYSCALLNR_REG = scnr;
-	if(ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1) {
+	if(ptrace(PTRACE_SETREGS, pi->pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
 	}
 	return;
@@ -305,32 +363,34 @@ static int single_step(pid_t pid) {
 	return 1;
 }
 
-int debugger_single_step(debugger_state* state, pid_t pid) {
+int debugger_single_step(debugger_state* d, size_t pidindex) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
 	breakpointinfo *bp;
-	void *ip = get_instruction_pointer(pid);
+	void *ip = get_instruction_pointer(pi->pid);
 	int ret, reset_bp = 0;
 	if(ip) {
-		bp = get_bpinfo(state, ip);
+		bp = get_bpinfo(pi, ip);
 		if(bp && bp->active) {
 			// if we continue from a breakpoint, we have to restore its original mem contents,
-			restore_breakpoint_mem(pid, bp);
+			restore_breakpoint_mem(pi->pid, bp);
 			reset_bp = 1;
 		}
 	}
-	ret = single_step(pid);
+	ret = single_step(pi->pid);
 	msleep(40);
 	if(reset_bp) 
-		activate_breakpoint(pid, bp);
+		activate_breakpoint(pi->pid, bp);
 	return ret;
 }
 
-int debugger_continue(debugger_state *state, pid_t pid) {
+int debugger_continue(debugger_state *d, size_t pidindex) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
 	breakpointinfo *bp;
-	void *ip = get_instruction_pointer(pid);
+	void *ip = get_instruction_pointer(pi->pid);
 	void *bp_ip;
 	if(ip) {
 		bp_ip = (void*) ((uintptr_t) ip - ARCH_BP_INSTR_SIZE);
-		bp = get_bpinfo(state, bp_ip); // ip is actually already at the next instr.
+		bp = get_bpinfo(pi, bp_ip); // ip is actually already at the next instr.
 		if(bp && bp->active) {
 			// if we continue from a breakpoint, we have to restore its original mem contents,
 			// set the ip again to its location,
@@ -340,11 +400,11 @@ int debugger_continue(debugger_state *state, pid_t pid) {
 			single_step(pid);
 			msleep(40); //give a short delay to propagate the single step event to the child...
 			activate_breakpoint(pid, bp); */
-			set_instruction_pointer(pid, bp_ip);
-			debugger_single_step(state, pid);
+			set_instruction_pointer(pi->pid, bp_ip);
+			debugger_single_step(d, pidindex);
 		}
 	}
-	if(ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
+	if(ptrace(PTRACE_CONT, pi->pid, NULL, NULL) == -1) {
 		perror("ptrace_cont");
 		return 0;
 	}
@@ -362,8 +422,7 @@ static const debugger_event event_translate_tbl[] = {
 	[PTRACE_EVENT_EXEC] = DE_EXEC,
 };
 
-static debugger_event translate_event(debugger_state* state, int event) {
-	unsigned i;
+static debugger_event translate_event(pidinfo* state, int event) {
 	if(event & 0x80) {
 		/* syscall return/exit, signaled from PTRACE_O_TRACESYSGOOD */
 		debugger_event res;
@@ -387,19 +446,27 @@ static debugger_event translate_event(debugger_state* state, int event) {
 	return DE_NONE;
 }
 
-debugger_event debugger_get_events(debugger_state* state, pid_t pid, int* retval, int block) {
+#ifndef __WALL
+#define __WALL 0x40000000
+#endif
+
+debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retval, int block) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
 	debugger_event res = DE_NONE;
 	unsigned long ev_data;
 	siginfo_t sig_data;
-	int ret = waitpid(pid, retval, block ? 0 : WNOHANG);
+	
+	int ret = waitpid(pi->pid, retval, __WALL | (block ? 0 : WNOHANG));
 	void* ip;
 	breakpointinfo* bp;
 	
 	if(ret == -1) {
-		if(errno == ECHILD) 
-			res = DE_EXIT;
+		//if(errno == ECHILD) 
+		//	res = DE_EXIT;
 		//else 
+			dprintf(2, "wp error %d\n", pi->pid);
 			perror("waitpid");
+			return DE_NONE;
 	} else {
 		
 		//if(WIFEXITED(*retval)) dprintf(2, "WIFEXITED\n");
@@ -408,7 +475,7 @@ debugger_event debugger_get_events(debugger_state* state, pid_t pid, int* retval
 		//if(WIFCONTINUED(*retval)) dprintf(2, "WIFCONTINUED\n");
 		
 		if(ret != 0) { /* FIXME was "wait" - typo ? */
-			if(ptrace(PTRACE_GETEVENTMSG, pid, NULL, &ev_data) == -1) {
+			if(ptrace(PTRACE_GETEVENTMSG, pi->pid, NULL, &ev_data) == -1) {
 	/*			if(errno == ESRCH) 
 					res = DE_EXIT;
 				//else */
@@ -416,22 +483,22 @@ debugger_event debugger_get_events(debugger_state* state, pid_t pid, int* retval
 				return res;
 			}
 			
-			if(ptrace(PTRACE_GETSIGINFO, pid, NULL, &sig_data) == -1) {
+			if(ptrace(PTRACE_GETSIGINFO, pi->pid, NULL, &sig_data) == -1) {
 	/*			if(errno == ESRCH) 
 					res = DE_EXIT;
 				//else */
 					perror("ptrace_getsiginfo");
 				return res;
 			}
-			dprintf(2, "waitpid retval %d\n", *retval);
-			dprintf(2, "got signal %s\n", get_signal_name(sig_data.si_signo));
+			//dprintf(2, "waitpid retval %d\n", *retval);
+			//dprintf(2, "got signal %s\n", get_signal_name(sig_data.si_signo));
 			
 			switch(sig_data.si_signo) {
 				case SIGTRAP:
-					ip = get_instruction_pointer(pid);
+					ip = get_instruction_pointer(pi->pid);
 					if(ip) {
-						dprintf(2, "instr pointer is at %p\n", ip);
-						bp = get_bpinfo(state, ip);
+						//dprintf(2, "instr pointer is at %p\n", ip);
+						bp = get_bpinfo(pi, ip);
 						if(bp) {
 							dprintf(2, "hit breakpoint!\n");
 							return DE_HIT_BP;
@@ -439,7 +506,7 @@ debugger_event debugger_get_events(debugger_state* state, pid_t pid, int* retval
 					}
 
 					//if((res = translate_event(state, ((*retval & (~(SIGTRAP)) ) >> 8))))
-					if((res = translate_event(state, (*retval >> 8) & (~SIGTRAP)))) {
+					if((res = translate_event(pi, (*retval >> 8) & (~SIGTRAP)))) {
 						if(res == DE_EXIT || res == DE_CLONE) *retval = ev_data;
 						return res;
 					}
@@ -474,12 +541,13 @@ void dump_ram_line(void* offset, size_t length) {
 	printf("\n");
 }
 
-void dump_ram(void* offset, ssize_t length, size_t linesize) {
+void dump_ram(void* offset, size_t length, size_t linesize) {
 	size_t start = 0;
-	while(length > 0) {
-		dump_ram_line((char*)offset + start, length > linesize ? linesize : length);
-		start += linesize;
-		length -= linesize;
+	while(length) {
+		size_t togo = (length > linesize ? linesize : length);
+		dump_ram_line((char*)offset + start, togo);
+		start += togo;
+		length -= togo;
 	}
 }
 
@@ -493,6 +561,7 @@ int read_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size
 	unsigned char* src = source_addr;
 	long read_buf;
 	unsigned i, chunksize;
+	errno = 0;
 	if(misaligned) {
 		read_buf = ptrace(PTRACE_PEEKDATA, pid, (uintptr_t) source_addr & (~(alignmask)), NULL);
 		if(errno) {
@@ -531,6 +600,7 @@ int write_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, siz
 		unsigned char c[sizeof(long)];
 	} read_buf;
 	unsigned i, chunksize;
+	errno = 0;
 	if(misaligned) {
 		base_addr = (void*) ((uintptr_t) dest_addr & not_alignmask);
 		read_buf.l = ptrace(PTRACE_PEEKDATA, pid, base_addr, NULL);

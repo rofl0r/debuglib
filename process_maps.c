@@ -46,7 +46,6 @@ sblist* process_maps_get(pid_t pid) {
 	char fnbuf[64];
 	char linebuf[4096 + 1024]; 
 	sblist* result;
-	unsigned i;
 	map_data current;
 	char *p, *p2;
 	

@@ -30,14 +30,16 @@ const char* signal_names[] = {
         [SIGVTALRM] = "SIGVTALRM",
         [SIGPROF] = "SIGPROF",
         [SIGWINCH] = "SIGWINCH",
+#if SIGIO != SIGPOLL
         [SIGIO] = "SIGIO",
+#endif
         [SIGPOLL] = "SIGPOLL",
         [SIGPWR] = "SIGPWR",
         [SIGSYS] = "SIGSYS",
 };
 
 const char* get_signal_name(int sig) {
-	if(sig >= 0 && sig < ARRAY_SIZE(signal_names))
+	if(sig >= 0 && (unsigned) sig < ARRAY_SIZE(signal_names))
 		return signal_names[sig];
 	return "unknown signal";
 }
