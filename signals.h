@@ -3,6 +3,6 @@
 
 const char* get_signal_name(int sig);
 
-//RcB: DEP "signals.c"
+#pragma RcB2 DEP "signals.c"
 
 #endif

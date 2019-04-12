@@ -52,6 +52,6 @@ size_t process_map_size(map_data* map);
 }
 #endif
 
-//RcB: DEP "process_maps.c"
+#pragma RcB2 DEP "process_maps.c"
 
 #endif

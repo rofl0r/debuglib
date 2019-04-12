@@ -4,6 +4,6 @@
 const char* syscall_get_name(unsigned sc);
 unsigned syscall_get_argcount(unsigned sc);
 
-//RcB: DEP "syscalls.c"
+#pragma RcB2 DEP "syscalls.c"
 
 #endif

@@ -72,6 +72,6 @@ const char* debugger_get_event_name(debugger_event de);
 int read_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size_t len);
 int write_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size_t len);
 
-//RcB: DEP "debuglib.c"
+#pragma RcB2 DEP "debuglib.c"
 
 #endif
