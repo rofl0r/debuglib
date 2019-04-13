@@ -238,6 +238,17 @@ int debugger_attach(debugger_state *d, pid_t pid) {
 	return set_debug_options(pid);
 }
 
+int debugger_detach(debugger_state *d, size_t pidindex) {
+	pid_t pid = debugger_pid_from_pidindex(d, pidindex);
+	if(pid == -1) return 0;
+	if(ptrace(PTRACE_ATTACH, pid, NULL, NULL) == -1) {
+		perror("ptrace detach");
+		return 0;
+	}
+	debugger_set_pid(d, pidindex, -1);
+	return 1;
+}
+
 size_t debugger_exec(debugger_state* d, char* path, char** args, char** env) {
 	pid_t result = fork();
 	errno = 0;
@@ -416,7 +427,7 @@ static const debugger_event event_translate_tbl[] = {
 	[PTRACE_EVENT_FORK] = DE_FORK,
 	[PTRACE_EVENT_VFORK] = DE_VFORK,
 	[PTRACE_EVENT_CLONE] = DE_CLONE,
-	// [PTRACE_EVENT_FORK_DONE] = DE_FORK_DONE,
+	//[PTRACE_EVENT_FORK_DONE] = DE_FORK_DONE,
 	[PTRACE_EVENT_VFORK_DONE] = DE_VFORK_DONE,
 	// [PTRACE_EVENT_CLONE_DONE] = DE_CLONE_DONE,
 	[PTRACE_EVENT_EXEC] = DE_EXEC,
@@ -494,6 +505,7 @@ debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retv
 			//dprintf(2, "got signal %s\n", get_signal_name(sig_data.si_signo));
 			
 			switch(sig_data.si_signo) {
+				case SIGCHLD:
 				case SIGTRAP:
 					ip = get_instruction_pointer(pi->pid);
 					if(ip) {
@@ -506,8 +518,10 @@ debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retv
 					}
 
 					//if((res = translate_event(state, ((*retval & (~(SIGTRAP)) ) >> 8))))
-					if((res = translate_event(pi, (*retval >> 8) & (~SIGTRAP)))) {
-						if(res == DE_EXIT || res == DE_CLONE) *retval = ev_data;
+					if((res = translate_event(pi, (*retval >> 8) & (~sig_data.si_signo)))) {
+						if(res == DE_EXIT || res == DE_CLONE ||
+						   res == DE_VFORK || res == DE_FORK ||
+						   res == DE_VFORK_DONE || res == DE_EXEC) *retval = ev_data;
 						return res;
 					}
 					break;

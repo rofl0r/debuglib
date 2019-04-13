@@ -57,6 +57,7 @@ int debugger_set_breakpoint(debugger_state* state, size_t pidindex, void* addr);
 void* debugger_get_ip(debugger_state* d, size_t pidindex);
 int debugger_set_ip(debugger_state* d, size_t pidindex, void* addr);
 int debugger_attach(debugger_state *d, pid_t pid);
+int debugger_detach(debugger_state *d, size_t pidindex);
 size_t debugger_exec(debugger_state* d, char* path, char** args, char** env);
 /* tells the debugger to signal on next syscall enter/return. does not actually wait. */
 int debugger_wait_syscall(debugger_state* d, size_t pidindex);
