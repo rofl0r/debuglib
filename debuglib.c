@@ -297,11 +297,25 @@ size_t debugger_exec(debugger_state* d, char* path, char** args, char** env) {
 
 int debugger_wait_syscall_pid(debugger_state* d, pid_t pid, int sig) {
 	if(ptrace(PTRACE_SYSCALL, pid, 0, sig) == -1) {
+#ifdef DEBUG
 		dprintf(2, "ptrace pid %d\n", (int) pid);
 		perror("ptrace_syscall");
+#endif
 		return 0;
 	}
 	return 1;
+}
+
+int debugger_wait_syscall_pid_retry(debugger_state* d, pid_t pid, int sig) {
+	for(;;) {
+		/* we need to sleep for a tiny amount, otherwise PTRACE_SYSCALL
+		   will fail with "no such process" */
+		if(!debugger_wait_syscall_pid(d, pid, sig)) {
+			if(errno != ESRCH) return 0;
+			usleep(10);
+		} else
+			return 1;
+	}
 }
 
 int debugger_wait_syscall(debugger_state* d, size_t pidindex) {
@@ -486,103 +500,12 @@ static debugger_event translate_event(pidinfo* state, int event) {
 #define __WALL 0x40000000
 #endif
 
-debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retval, int block) {
-	pidinfo *pi = get_pidinfo(d, pidindex);
+debugger_event debugger_get_events(debugger_state* d, pid_t *pid, int* retval, int block) {
 	debugger_event res = DE_NONE;
 	unsigned long ev_data;
 	siginfo_t sig_data;
 
-	int ret = waitpid(pi->pid, retval, __WALL | (block ? 0 : WNOHANG));
-	void* ip;
-	breakpointinfo* bp;
-
-	if(ret == -1) {
-		//if(errno == ECHILD) 
-		//	res = DE_EXIT;
-		//else 
-			dprintf(2, "wp error %d\n", pi->pid);
-			perror("waitpid");
-			return DE_NONE;
-	} else {
-
-		//if(WIFEXITED(*retval)) dprintf(2, "WIFEXITED\n");
-		//if(WIFSIGNALED(*retval)) dprintf(2, "WIFSIGNALED\n");
-		//if(WIFSTOPPED(*retval)) dprintf(2, "WIFSTOPPED\n");
-		//if(WIFCONTINUED(*retval)) dprintf(2, "WIFCONTINUED\n");
-
-		if(ret != 0) { /* FIXME was "wait" - typo ? */
-			if(ptrace(PTRACE_GETEVENTMSG, pi->pid, NULL, &ev_data) == -1) {
-	/*			if(errno == ESRCH)
-					res = DE_EXIT;
-				//else */
-					perror("ptrace_geteventmsg");
-				return res;
-			}
-
-			if(ptrace(PTRACE_GETSIGINFO, pi->pid, NULL, &sig_data) == -1) {
-	/*			if(errno == ESRCH)
-					res = DE_EXIT;
-				//else */
-					perror("ptrace_getsiginfo");
-				return res;
-			}
-			//dprintf(2, "waitpid retval %d\n", *retval);
-			//dprintf(2, "got signal %s\n", get_signal_name(sig_data.si_signo));
-
-			switch(sig_data.si_signo) {
-				case SIGTRAP:
-					ip = get_instruction_pointer(pi->pid);
-					if(ip) {
-						//dprintf(2, "instr pointer is at %p\n", ip);
-						bp = get_bpinfo(pi, ip);
-						if(bp) {
-							dprintf(2, "hit breakpoint!\n");
-							return DE_HIT_BP;
-						}
-					}
-
-					//if((res = translate_event(state, ((*retval & (~(SIGTRAP)) ) >> 8))))
-					if((res = translate_event(pi, (*retval >> 8) & (~SIGTRAP)))) {
-						switch(res) {
-						case DE_CLONE:
-						case DE_VFORK:
-						case DE_FORK:
-						case DE_VFORK_DONE:
-						case DE_EXEC:
-							*retval = ev_data;
-							break;
-						case DE_EXIT:
-							*retval = *retval;
-							break;
-						}
-						return res;
-					}
-					break;
-				default:
-					res = DE_SIGNAL;
-					*retval = sig_data.si_signo;
-					return res;
-			}
-			if(ev_data != 0) {
-				dprintf(2, "XXXXXXXXXXXXXXXXXXXXXX\n");
-			}
-			dprintf(2, "event info: %lu\n", ev_data);
-
-			//if(((*retval >> 16) & 0xffff) ==
-
-			res = DE_NONE;
-		}
-	}
-
-	return res;
-}
-
-debugger_event debugger_get_all_events(debugger_state* d, pid_t *pid, int* retval, int block) {
-	debugger_event res = DE_NONE;
-	unsigned long ev_data;
-	siginfo_t sig_data;
-
-	int ret = waitpid(-1, retval, __WALL | (block ? 0 : WNOHANG));
+	int ret = waitpid(*pid, retval, __WALL | (block ? 0 : WNOHANG));
 	void* ip;
 	breakpointinfo* bp;
 
@@ -590,7 +513,7 @@ debugger_event debugger_get_all_events(debugger_state* d, pid_t *pid, int* retva
 		//if(errno == ECHILD)
 		//	res = DE_EXIT;
 		//else
-			dprintf(2, "wp error %d\n", ret);
+			dprintf(2, "wp error ret %d, pid %d\n", ret, (int) *pid);
 			perror("waitpid");
 			return DE_NONE;
 	} else {
@@ -604,6 +527,8 @@ debugger_event debugger_get_all_events(debugger_state* d, pid_t *pid, int* retva
 		if(ret != 0) { /* FIXME was "wait" - typo ? */
 			if(ptrace(PTRACE_GETEVENTMSG, *pid, NULL, &ev_data) == -1) {
 				if(!pi && WIFEXITED(*retval)) {
+					/* FIXME: for some reason this code is not reached anymore.
+					          eventually DE_EXITED state can be removed again. */
 					*retval = WEXITSTATUS(*retval);
 					return DE_EXITED;
 				}
@@ -626,17 +551,18 @@ debugger_event debugger_get_all_events(debugger_state* d, pid_t *pid, int* retva
 
 			switch(sig_data.si_signo) {
 				case SIGTRAP:
-#if 0
-					ip = get_instruction_pointer(*pid);
+					ip = 0;
+					if(pi && pi->breakpoints)
+						ip = get_instruction_pointer(*pid);
 					if(ip) {
 						//dprintf(2, "instr pointer is at %p\n", ip);
-						bp = get_bpinfo(pi, ip);
+						/* if a bp was hit, we actually land just behind it */
+						bp = get_bpinfo(pi, (uintptr_t)ip - ARCH_BP_INSTR_SIZE);
 						if(bp) {
 							dprintf(2, "hit breakpoint!\n");
 							return DE_HIT_BP;
 						}
 					}
-#endif
 
 					//if((res = translate_event(state, ((*retval & (~(SIGTRAP)) ) >> 8))))
 					if((res = translate_event(pi, (*retval >> 8) & (~SIGTRAP)))) {
@@ -655,6 +581,8 @@ debugger_event debugger_get_all_events(debugger_state* d, pid_t *pid, int* retva
 					}
 					break;
 				default:
+					/* TODO: might be interesting to provide other values from
+					   sig_data, such as the signal sender pid */
 					res = DE_SIGNAL;
 					*retval = sig_data.si_signo;
 					return res;

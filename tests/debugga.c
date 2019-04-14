@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/select.h>
 
 extern char** environ;
 
@@ -30,10 +31,10 @@ int main(int argc, char** argv) {
 	debugger_state dbga;
 	debugger_event de;
 	void* addr;
-	
+
 	debugger_state_init(&dbga);
-	
-	if((child = start_debuggee(argv[1], &argv[1], environ)) == (pid_t) -1) {
+
+	if((child = debugger_exec(&dbga, argv[1], &argv[1], environ)) == (pid_t) -1) {
 		puts("failed to launch debuggee");
 		return 1;
 	}
@@ -41,8 +42,9 @@ int main(int argc, char** argv) {
 		nread = gets_nonblocking(0, linebuf, sizeof(linebuf));
 		if(nread) {
 			switch(linebuf[0]) {
-				case 'b': 
+				case 'b':
 					addr = (void*) strtol(&linebuf[2], NULL, 16);
+					dprintf(2, "setting breakpoint on %p\n", addr);
 					debugger_set_breakpoint(&dbga, child, addr);
 					break;
 				case 'c':
@@ -51,14 +53,14 @@ int main(int argc, char** argv) {
 				case 's':
 					debugger_single_step(&dbga, child);
 					break;
-					
+
 				default:
 					puts("unknown prefix");
-				
+
 			}
 		}
-		if((de = debugger_get_events(&dbga, child, &retval, 0)) != DE_NONE) {
-			printf("got a debugger event, retval %d\n", retval);
+		if((de = debugger_get_events(&dbga, &child, &retval, 0)) != DE_NONE) {
+			printf("got a debugger event, retval %d, (%s)\n", retval, debugger_get_event_name(de));
 			if(de == DE_EXIT) {
 				puts("child exited.");
 				return 0;
@@ -67,6 +69,6 @@ int main(int argc, char** argv) {
 
 		sleep(1);
 	}
-	
+
 	return 0;
 }

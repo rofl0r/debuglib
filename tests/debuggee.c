@@ -16,6 +16,7 @@ int main() {
 		__asm__("int3");
 	}
 #endif
+	dprintf(2, "address of main(): %p\n", &main);
 	unsigned i;
 	for(i = 0; i < 10; i++)
 		msg();

@@ -75,8 +75,6 @@ static void child_stats(debugger_state* d) {
 	vprintf(2, buf);
 }
 
-debugger_event debugger_get_all_events(debugger_state* d, pid_t *pid, int* retval, int block);
-
 int main(int argc, char** argv) {
 	if (argc < 3) return usage(argv[0]);
 	FILE *f = stdout;
@@ -125,8 +123,8 @@ int main(int argc, char** argv) {
 	while((childs_alive = debugger_get_pidcount(d))) {
 mainloop:;
 		if(!blocking_io) usleep(10);
-
-		de = debugger_get_all_events(d, &child, &retval, blocking_io);
+		child = -1; /* set pid to -1 so all childs are queried */
+		de = debugger_get_events(d, &child, &retval, blocking_io);
 		c = debugger_pidindex_from_pid(d, child);
 //		child = debugger_pid_from_pidindex(d, c);
 		if(c == -1) continue;

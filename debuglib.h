@@ -64,6 +64,8 @@ int debugger_detach(debugger_state *d, size_t pidindex);
 size_t debugger_exec(debugger_state* d, char* path, char** args, char** env);
 /* tells the debugger to signal on next syscall enter/return. does not actually wait. */
 int debugger_wait_syscall_pid(debugger_state* d, pid_t pid, int sig);
+/* same, but tries the above in a loop until it succeeds */
+int debugger_wait_syscall_pid_retry(debugger_state* d, pid_t pid, int sig);
 int debugger_wait_syscall(debugger_state* d, size_t pidindex);
 long debugger_get_syscall_number(debugger_state* state, size_t pidindex);
 long debugger_get_syscall_arg(debugger_state *d, size_t pidindex, int argno);
@@ -71,7 +73,10 @@ void debugger_set_syscall_arg(debugger_state *d, size_t pidindex, int argno, uns
 void debugger_set_syscall_number(debugger_state * state, size_t pidindex, long scnr);
 int debugger_single_step(debugger_state* state, size_t pidindex);
 int debugger_continue(debugger_state *state, size_t pidindex);
-debugger_event debugger_get_events(debugger_state* state, size_t pidindex, int* retval, int block);
+/* pid is an in-out pointer: when calling the function pass either -1 to get results from all
+   childs, or the pid of the process you wanna trace. on return, it will contain the pid
+   of the process that was queried (should be identical to the passed value, if it was not -1) */
+debugger_event debugger_get_events(debugger_state* d, pid_t *pid, int* retval, int block);
 const char* debugger_get_event_name(debugger_event de);
 
 int read_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size_t len);
