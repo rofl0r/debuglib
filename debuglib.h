@@ -31,7 +31,7 @@ typedef struct {
 typedef enum {
 	DE_NONE = 0,
 	DE_HIT_BP,
-	DE_EXIT,
+	DE_EXIT, /* debugger notification when a process is about to exit. exitstatus can be queried with WEXITSTATUS(retval) */
 	DE_FORK,
 	DE_VFORK,
 	DE_CLONE,
@@ -41,6 +41,8 @@ typedef enum {
 	DE_SYSCALL_ENTER,
 	DE_SYSCALL_RETURN,
 	DE_EXEC,
+	DE_SIGNAL,
+	DE_EXITED, /* custom notification when the process is done exiting. exitstatus is returned directly */
 	DE_MAX,
 } debugger_event;
 
@@ -52,6 +54,7 @@ size_t debugger_get_pidcount(debugger_state* d);
 pid_t debugger_pid_from_pidindex(debugger_state* d, size_t index);
 ssize_t debugger_pidindex_from_pid(debugger_state* d, pid_t pid);
 void debugger_add_pid(debugger_state* d, pid_t pid);
+void debugger_remove_pid(debugger_state* d, pid_t pid);
 void debugger_set_pid(debugger_state *d, size_t pidindex, pid_t pid);
 int debugger_set_breakpoint(debugger_state* state, size_t pidindex, void* addr);
 void* debugger_get_ip(debugger_state* d, size_t pidindex);
@@ -60,6 +63,7 @@ int debugger_attach(debugger_state *d, pid_t pid);
 int debugger_detach(debugger_state *d, size_t pidindex);
 size_t debugger_exec(debugger_state* d, char* path, char** args, char** env);
 /* tells the debugger to signal on next syscall enter/return. does not actually wait. */
+int debugger_wait_syscall_pid(debugger_state* d, pid_t pid, int sig);
 int debugger_wait_syscall(debugger_state* d, size_t pidindex);
 long debugger_get_syscall_number(debugger_state* state, size_t pidindex);
 long debugger_get_syscall_arg(debugger_state *d, size_t pidindex, int argno);

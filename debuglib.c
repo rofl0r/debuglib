@@ -75,6 +75,8 @@ const char event_strings[DE_MAX][20] = {
 	[DE_SYSCALL_ENTER] = "DE_SYSCALL_ENTER",
 	[DE_SYSCALL_RETURN] = "DE_SYSCALL_RETURN",
 	[DE_EXEC] = "DE_EXEC",
+	[DE_SIGNAL] = "DE_SIGNAL",
+	[DE_EXITED] = "DE_EXITED",
 };
 
 const char* debugger_get_event_name(debugger_event de) {
@@ -205,12 +207,12 @@ static int set_debug_options(pid_t pid) {
 	          | PTRACE_O_TRACEEXEC
 	          | PTRACE_O_TRACEEXIT
 	          | PTRACE_O_TRACEFORK
-	          | PTRACE_O_TRACEVFORK 
-	          | PTRACE_O_TRACECLONE 
+	          | PTRACE_O_TRACEVFORK
+	          | PTRACE_O_TRACECLONE
 	          | PTRACE_O_TRACEVFORKDONE
 	          | PTRACE_O_TRACESYSGOOD
 	          ;
-	
+
 	if(ptrace(PTRACE_SETOPTIONS, pid, NULL, options) == -1) {
 		perror("ptrace_setoptions");
 		return 0;
@@ -222,6 +224,26 @@ void debugger_add_pid(debugger_state* d, pid_t pid) {
 	pidinfo pi = {0};
 	pi.pid = pid;
 	sblist_add(d->pids, &pi);
+}
+
+static void free_bpinfo(pidinfo *pi) {
+	if(pi->breakpoints) hashlist_free(pi->breakpoints);
+	pi->breakpoints = 0;
+}
+
+static void free_processmaps(pidinfo *pi) {
+	if(pi->processmaps) sblist_free(pi->processmaps);
+	pi->processmaps = 0;
+}
+
+void debugger_remove_pid(debugger_state* d, pid_t pid) {
+	ssize_t idx = debugger_pidindex_from_pid(d, pid);
+	if(idx == -1) return;
+	pidinfo *pi = get_pidinfo(d, idx);
+	pi->pid = -1;
+	free_bpinfo(pi);
+	free_processmaps(pi);
+	sblist_delete(d->pids, idx);
 }
 
 void debugger_set_pid(debugger_state *d, size_t pidindex, pid_t pid) {
@@ -273,15 +295,18 @@ size_t debugger_exec(debugger_state* d, char* path, char** args, char** env) {
 	goto ret_err;
 }
 
-int debugger_wait_syscall(debugger_state* d, size_t pidindex) {
-	pidinfo *pi = get_pidinfo(d, pidindex);
-	if(ptrace(PTRACE_SYSCALL, pi->pid, 0, 0) == -1) {
-		dprintf(2, "ptrace pid %d\n", (int) pi->pid);
+int debugger_wait_syscall_pid(debugger_state* d, pid_t pid, int sig) {
+	if(ptrace(PTRACE_SYSCALL, pid, 0, sig) == -1) {
+		dprintf(2, "ptrace pid %d\n", (int) pid);
 		perror("ptrace_syscall");
 		return 0;
 	}
-	//dprintf(2, "ptrace_syscall succeeded\n");
 	return 1;
+}
+
+int debugger_wait_syscall(debugger_state* d, size_t pidindex) {
+	pidinfo *pi = get_pidinfo(d, pidindex);
+	return debugger_wait_syscall_pid(d, pi->pid, 0);
 }
 
 long debugger_get_syscall_number(debugger_state* d, size_t pidindex) {
@@ -312,7 +337,7 @@ long debugger_get_syscall_arg(debugger_state *d, size_t pidindex, int argno) {
 		perror(__FUNCTION__);
 		return -1;
 	}
-	
+
 	switch(argno) {
 		case 1: return regs.ARCH_SYSCALL_ARG(1);
 		case 2: return regs.ARCH_SYSCALL_ARG(2);
@@ -333,7 +358,7 @@ void debugger_set_syscall_arg(debugger_state *d, size_t pidindex, int argno, uns
 		perror(__FUNCTION__);
 		return;
 	}
-	
+
 	switch(argno) {
 		case 1: regs.ARCH_SYSCALL_ARG(1) = nu; break;
 		case 2: regs.ARCH_SYSCALL_ARG(2) = nu; break;
@@ -345,7 +370,7 @@ void debugger_set_syscall_arg(debugger_state *d, size_t pidindex, int argno, uns
 			dprintf(2, "error: invalid number of syscall args\n");
 			return;
 	}
-	
+
 	if(ptrace(PTRACE_SETREGS, pi->pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
 		return;
@@ -466,11 +491,11 @@ debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retv
 	debugger_event res = DE_NONE;
 	unsigned long ev_data;
 	siginfo_t sig_data;
-	
+
 	int ret = waitpid(pi->pid, retval, __WALL | (block ? 0 : WNOHANG));
 	void* ip;
 	breakpointinfo* bp;
-	
+
 	if(ret == -1) {
 		//if(errno == ECHILD) 
 		//	res = DE_EXIT;
@@ -479,23 +504,23 @@ debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retv
 			perror("waitpid");
 			return DE_NONE;
 	} else {
-		
+
 		//if(WIFEXITED(*retval)) dprintf(2, "WIFEXITED\n");
 		//if(WIFSIGNALED(*retval)) dprintf(2, "WIFSIGNALED\n");
 		//if(WIFSTOPPED(*retval)) dprintf(2, "WIFSTOPPED\n");
 		//if(WIFCONTINUED(*retval)) dprintf(2, "WIFCONTINUED\n");
-		
+
 		if(ret != 0) { /* FIXME was "wait" - typo ? */
 			if(ptrace(PTRACE_GETEVENTMSG, pi->pid, NULL, &ev_data) == -1) {
-	/*			if(errno == ESRCH) 
+	/*			if(errno == ESRCH)
 					res = DE_EXIT;
 				//else */
 					perror("ptrace_geteventmsg");
 				return res;
 			}
-			
+
 			if(ptrace(PTRACE_GETSIGINFO, pi->pid, NULL, &sig_data) == -1) {
-	/*			if(errno == ESRCH) 
+	/*			if(errno == ESRCH)
 					res = DE_EXIT;
 				//else */
 					perror("ptrace_getsiginfo");
@@ -503,9 +528,8 @@ debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retv
 			}
 			//dprintf(2, "waitpid retval %d\n", *retval);
 			//dprintf(2, "got signal %s\n", get_signal_name(sig_data.si_signo));
-			
+
 			switch(sig_data.si_signo) {
-				case SIGCHLD:
 				case SIGTRAP:
 					ip = get_instruction_pointer(pi->pid);
 					if(ip) {
@@ -518,27 +542,134 @@ debugger_event debugger_get_events(debugger_state* d, size_t pidindex, int* retv
 					}
 
 					//if((res = translate_event(state, ((*retval & (~(SIGTRAP)) ) >> 8))))
-					if((res = translate_event(pi, (*retval >> 8) & (~sig_data.si_signo)))) {
-						if(res == DE_EXIT || res == DE_CLONE ||
-						   res == DE_VFORK || res == DE_FORK ||
-						   res == DE_VFORK_DONE || res == DE_EXEC) *retval = ev_data;
+					if((res = translate_event(pi, (*retval >> 8) & (~SIGTRAP)))) {
+						switch(res) {
+						case DE_CLONE:
+						case DE_VFORK:
+						case DE_FORK:
+						case DE_VFORK_DONE:
+						case DE_EXEC:
+							*retval = ev_data;
+							break;
+						case DE_EXIT:
+							*retval = *retval;
+							break;
+						}
 						return res;
 					}
 					break;
 				default:
-					break;
+					res = DE_SIGNAL;
+					*retval = sig_data.si_signo;
+					return res;
 			}
 			if(ev_data != 0) {
 				dprintf(2, "XXXXXXXXXXXXXXXXXXXXXX\n");
 			}
 			dprintf(2, "event info: %lu\n", ev_data);
-			
-			//if(((*retval >> 16) & 0xffff) == 
-			
+
+			//if(((*retval >> 16) & 0xffff) ==
+
 			res = DE_NONE;
 		}
 	}
-	
+
+	return res;
+}
+
+debugger_event debugger_get_all_events(debugger_state* d, pid_t *pid, int* retval, int block) {
+	debugger_event res = DE_NONE;
+	unsigned long ev_data;
+	siginfo_t sig_data;
+
+	int ret = waitpid(-1, retval, __WALL | (block ? 0 : WNOHANG));
+	void* ip;
+	breakpointinfo* bp;
+
+	if(ret == -1) {
+		//if(errno == ECHILD)
+		//	res = DE_EXIT;
+		//else
+			dprintf(2, "wp error %d\n", ret);
+			perror("waitpid");
+			return DE_NONE;
+	} else {
+		*pid = ret;
+		pidinfo *pi = get_pidinfo(d, debugger_pidindex_from_pid(d, *pid));
+		//if(WIFEXITED(*retval)) dprintf(2, "WIFEXITED\n");
+		//if(WIFSIGNALED(*retval)) dprintf(2, "WIFSIGNALED\n");
+		//if(WIFSTOPPED(*retval)) dprintf(2, "WIFSTOPPED\n");
+		//if(WIFCONTINUED(*retval)) dprintf(2, "WIFCONTINUED\n");
+
+		if(ret != 0) { /* FIXME was "wait" - typo ? */
+			if(ptrace(PTRACE_GETEVENTMSG, *pid, NULL, &ev_data) == -1) {
+				if(!pi && WIFEXITED(*retval)) {
+					*retval = WEXITSTATUS(*retval);
+					return DE_EXITED;
+				}
+	/*			if(errno == ESRCH)
+					res = DE_EXIT;
+				//else */
+					perror("ptrace_geteventmsg");
+//				return res;
+			}
+
+			if(ptrace(PTRACE_GETSIGINFO, *pid, NULL, &sig_data) == -1) {
+	/*			if(errno == ESRCH)
+					res = DE_EXIT;
+				//else */
+					perror("ptrace_getsiginfo");
+				return res;
+			}
+			//dprintf(2, "waitpid retval %d\n", *retval);
+			//dprintf(2, "got signal %s\n", get_signal_name(sig_data.si_signo));
+
+			switch(sig_data.si_signo) {
+				case SIGTRAP:
+#if 0
+					ip = get_instruction_pointer(*pid);
+					if(ip) {
+						//dprintf(2, "instr pointer is at %p\n", ip);
+						bp = get_bpinfo(pi, ip);
+						if(bp) {
+							dprintf(2, "hit breakpoint!\n");
+							return DE_HIT_BP;
+						}
+					}
+#endif
+
+					//if((res = translate_event(state, ((*retval & (~(SIGTRAP)) ) >> 8))))
+					if((res = translate_event(pi, (*retval >> 8) & (~SIGTRAP)))) {
+						switch(res) {
+						case DE_EXIT:
+							/* consumer needs to query WEXITSTATUS() himself */
+						case DE_CLONE:
+						case DE_VFORK:
+						case DE_FORK:
+						case DE_VFORK_DONE:
+						case DE_EXEC:
+							*retval = ev_data;
+							break;
+						}
+						return res;
+					}
+					break;
+				default:
+					res = DE_SIGNAL;
+					*retval = sig_data.si_signo;
+					return res;
+			}
+			if(ev_data != 0) {
+				dprintf(2, "XXXXXXXXXXXXXXXXXXXXXX\n");
+			}
+			dprintf(2, "event info: %lu\n", ev_data);
+
+			//if(((*retval >> 16) & 0xffff) ==
+
+			res = DE_NONE;
+		}
+	}
+
 	return res;
 }
 
@@ -635,7 +766,7 @@ int write_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, siz
 		}
 		dst = (unsigned char*) ((uintptr_t) base_addr + WORD_SIZE);
 	}
-	
+
 	while(len) {
 		chunksize = MIN(len, WORD_SIZE);
 		misaligned = WORD_SIZE - chunksize;
