@@ -24,11 +24,20 @@ static int usage(const char *a0) {
 }
 
 static int search_path_bin(const char *bin, char *buf, size_t buflen) {
-	char *p = getenv("PATH"), *tok = strtok(p, ":");
-	if (tok) do {
-		snprintf(buf, buflen, "%s/%s", tok, bin);
+	char *p = getenv("PATH"), *o;
+	size_t l;
+	for(;;) {
+		o = buf;
+		l = buflen;
+		while(l && *p && *p != ':') {
+			*(o++) = *(p++);
+			l--;
+		}
+		snprintf(o, l, "/%s", bin);
 		if(access(buf, X_OK) == 0) return 1;
-	} while((tok = strtok(NULL, ":")));
+		if(*p == ':') p++;
+		else if(!p) break;
+	}
 	return 0;
 }
 
