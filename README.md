@@ -25,3 +25,17 @@ debuglib was designed for use with the
 multi-purpose C library [libulz](https://github.com/rofl0r/libulz),
 which provides some data structures such as hashmaps and lists.
 
+How to build the filetracer example program
+-------------------------------------------
+
+	cd /tmp
+	mkdir debuglib-0000
+	cd debuglib-0000/
+	git clone https://github.com/rofl0r/debuglib
+	git clone https://github.com/rofl0r/libulz lib
+	git clone https://github.com/rofl0r/rcb2
+	export PATH=$PATH:/tmp/debuglib-0000/rcb2
+	ln -s /tmp/debuglib-0000/rcb2/rcb2.py /tmp/debuglib-0000/rcb2/rcb2
+	cd debuglib/tests
+	rcb2 filetrace.c
+
