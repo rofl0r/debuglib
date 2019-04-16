@@ -163,7 +163,7 @@ mainloop:;
 				case SYS_arch_prctl: case SYS_rt_sigaction: case SYS_rt_sigprocmask:
 				case SYS_brk: case SYS_fcntl: case SYS_uname: case SYS_getppid:
 				case SYS_setuid: case SYS_futex: case SYS_getgid: case SYS_setgid:
-				case SYS_set_tid_address: case SYS_stat: case SYS_gettid: case SYS_getuid:
+				case SYS_set_tid_address: case SYS_gettid: case SYS_getuid:
 					break;
 				default:
 					child_stats(d);
@@ -171,7 +171,6 @@ mainloop:;
 				}
 				if(debugmode &&
 					de == DE_SYSCALL_ENTER &&
-					sc == SYS_open ||
 					sc == SYS_wait4
 				) {
 					/* interesting syscalls */
@@ -182,15 +181,16 @@ mainloop:;
 					}
 				}
 				if(de == DE_SYSCALL_ENTER) switch(sc) {
-					case SYS_execve: {
-						char path[512], argv[512];
+					case SYS_execve: case SYS_stat: {
+						char path[512];
 						read_process_string(child, path, sizeof path, debugger_get_syscall_arg(d, c, 1));
-						vprintf(2, "exec: %s\n", path);
+						vprintf(2, "%s: %s\n", syscall_get_name(sc), path);
 					} break;
 					case SYS_open: {
 						char fnbuf[512];
 						read_process_string(child, fnbuf, sizeof fnbuf, debugger_get_syscall_arg(d, c, 1));
 						fprintf(f, "%s\n", fnbuf);
+						vprintf(2, "%s: %s\n", syscall_get_name(sc), fnbuf);
 					} break;
 					case SYS_wait4: {
 						skip_wait = 0;
