@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
 	int retval;
 	debugger_state dbga;
 	debugger_event de;
-	void* addr;
+	uintptr_t addr;
 
 	debugger_state_init(&dbga);
 
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
 		if(nread) {
 			switch(linebuf[0]) {
 				case 'b':
-					addr = (void*) strtol(&linebuf[2], NULL, 16);
+					addr = strtol(&linebuf[2], NULL, 16);
 					dprintf(2, "setting breakpoint on %p\n", addr);
 					debugger_set_breakpoint(&dbga, child, addr);
 					break;

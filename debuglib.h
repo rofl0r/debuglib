@@ -10,7 +10,7 @@
 
 #define BP_INSTR_SIZE_MAX 16
 typedef struct {
-	void* addr;
+	uintptr_t addr;
 	unsigned char map_perms;
 	unsigned char bp_instr_size;
 	char bp_backup[BP_INSTR_SIZE_MAX];
@@ -56,9 +56,9 @@ ssize_t debugger_pidindex_from_pid(debugger_state* d, pid_t pid);
 void debugger_add_pid(debugger_state* d, pid_t pid);
 void debugger_remove_pid(debugger_state* d, pid_t pid);
 //void debugger_set_pid(debugger_state *d, size_t pidindex, pid_t pid);
-int debugger_set_breakpoint(debugger_state* state, pid_t pid, void* addr);
-void* debugger_get_ip(debugger_state* d, pid_t pid);
-int debugger_set_ip(debugger_state* d, pid_t pid, void* addr);
+int debugger_set_breakpoint(debugger_state* state, pid_t pid, uintptr_t addr);
+uintptr_t debugger_get_ip(debugger_state* d, pid_t pid);
+int debugger_set_ip(debugger_state* d, pid_t pid, uintptr_t addr);
 int debugger_attach(debugger_state *d, pid_t pid);
 int debugger_detach(debugger_state *d, pid_t pid);
 pid_t debugger_exec(debugger_state* d, const char* path, char *const args[], char *const env[]);
@@ -78,8 +78,8 @@ int debugger_continue(debugger_state *state, pid_t pid);
 debugger_event debugger_get_events(debugger_state* d, pid_t *pid, int* retval, int block);
 const char* debugger_get_event_name(debugger_event de);
 
-int read_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size_t len);
-int write_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size_t len);
+int read_process_memory_slow(pid_t pid, void* dest_addr, uintptr_t source_addr, size_t len);
+int write_process_memory_slow(pid_t pid, uintptr_t dest_addr, void* source_addr, size_t len);
 
 #pragma RcB2 DEP "debuglib.c"
 

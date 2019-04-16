@@ -119,11 +119,11 @@ ssize_t debugger_pidindex_from_pid(debugger_state* d, pid_t pid) {
 	return res;
 }
 
-static breakpointinfo* get_bpinfo(pidinfo* state, void* addr) {
+static breakpointinfo* get_bpinfo(pidinfo* state, uintptr_t addr) {
 	if(!state->breakpoints) goto out;
 	breakpointinfo* bp = NULL;
 	sblist* bucket;
-	bucket = hashlist_get(state->breakpoints, (uint32_t) (size_t) addr);
+	bucket = hashlist_get(state->breakpoints, (uint32_t) addr);
 	if(bucket) {
 		sblist_iter(bucket, bp) {
 			if(bp->addr == addr) return bp;
@@ -133,7 +133,7 @@ static breakpointinfo* get_bpinfo(pidinfo* state, void* addr) {
 	return NULL;
 }
 
-static breakpointinfo* add_new_bpinfo(pidinfo* state, void* addr) {
+static breakpointinfo* add_new_bpinfo(pidinfo* state, uintptr_t addr) {
 	breakpointinfo new_bp = {
 		.addr = addr,
 		.bp_instr_size = ARCH_BP_INSTR_SIZE,
@@ -141,7 +141,7 @@ static breakpointinfo* add_new_bpinfo(pidinfo* state, void* addr) {
 		.active = 0,
 	};
 	if(!state->breakpoints) state->breakpoints = hashlist_new(64, sizeof(breakpointinfo));
-	if(!hashlist_add(state->breakpoints, (uint32_t) (size_t) addr, &new_bp))
+	if(!hashlist_add(state->breakpoints, (uint32_t) addr, &new_bp))
 		return get_bpinfo(state, addr);
 	return NULL;
 }
@@ -164,7 +164,7 @@ static inline pidinfo* get_pidinfo(debugger_state* state, size_t pidindex) {
 	return sblist_get(state->pids, pidindex);
 }
 
-int debugger_set_breakpoint(debugger_state* state, pid_t pid, void* addr) {
+int debugger_set_breakpoint(debugger_state* state, pid_t pid, uintptr_t addr) {
 	ssize_t pidindex = debugger_pidindex_from_pid(state, pid);
 	pidinfo *pi = get_pidinfo(state, pidindex);
 	breakpointinfo* bp = get_bpinfo(pi, addr);
@@ -186,24 +186,24 @@ int debugger_set_breakpoint(debugger_state* state, pid_t pid, void* addr) {
 	*/
 }
 
-static void* get_instruction_pointer(pid_t pid) {
+static uintptr_t get_instruction_pointer(pid_t pid) {
 	long ret;
 	errno = 0;
 	ret = ptrace(PTRACE_PEEKUSER, pid, WORD_SIZE * ARCH_IP, NULL);
 	if(errno) {
 		perror("ptrace_peekuser");
-		return NULL;
+		return 0;
 	}
-	return (void*) ret;
+	return ret;
 }
 
-void* debugger_get_ip(debugger_state* d, pid_t pid) {
+uintptr_t debugger_get_ip(debugger_state* d, pid_t pid) {
 	ssize_t pidindex = debugger_pidindex_from_pid(d, pid);
 	pidinfo *pi = get_pidinfo(d, pidindex);
 	return get_instruction_pointer(pi->pid);
 }
 
-static int set_instruction_pointer(pid_t pid, void* addr) {
+static int set_instruction_pointer(pid_t pid, uintptr_t addr) {
 	long ret;
 	ret = ptrace(PTRACE_POKEUSER, pid, WORD_SIZE * ARCH_IP, addr);
 	if(ret == -1) {
@@ -213,7 +213,7 @@ static int set_instruction_pointer(pid_t pid, void* addr) {
 	return 1;
 }
 
-int debugger_set_ip(debugger_state* d, pid_t pid, void* addr) {
+int debugger_set_ip(debugger_state* d, pid_t pid, uintptr_t addr) {
 	return set_instruction_pointer(pid, addr);
 }
 
@@ -421,7 +421,7 @@ int debugger_single_step(debugger_state* d, pid_t pid) {
 	ssize_t pidindex = debugger_pidindex_from_pid(d, pid);
 	pidinfo *pi = get_pidinfo(d, pidindex);
 	breakpointinfo *bp;
-	void *ip = get_instruction_pointer(pid);
+	uintptr_t ip = get_instruction_pointer(pid);
 	int ret, reset_bp = 0;
 	if(ip) {
 		bp = get_bpinfo(pi, ip);
@@ -442,10 +442,10 @@ int debugger_continue(debugger_state *d, pid_t pid) {
 	size_t pidindex = debugger_pidindex_from_pid(d, pid);
 	pidinfo *pi = get_pidinfo(d, pidindex);
 	breakpointinfo *bp;
-	void *ip = get_instruction_pointer(pid);
-	void *bp_ip;
+	uintptr_t ip = get_instruction_pointer(pid);
+	uintptr_t bp_ip;
 	if(ip) {
-		bp_ip = (void*) ((uintptr_t) ip - ARCH_BP_INSTR_SIZE);
+		bp_ip = ip - ARCH_BP_INSTR_SIZE;
 		bp = get_bpinfo(pi, bp_ip); // ip is actually already at the next instr.
 		if(bp && bp->active) {
 			// if we continue from a breakpoint, we have to restore its original mem contents,
@@ -512,7 +512,7 @@ debugger_event debugger_get_events(debugger_state* d, pid_t *pid, int* retval, i
 	siginfo_t sig_data;
 
 	int ret = waitpid(*pid, retval, __WALL | (block ? 0 : WNOHANG));
-	void* ip;
+	uintptr_t ip;
 	breakpointinfo* bp;
 
 	if(ret == 0) {
@@ -631,15 +631,15 @@ static const long alignmask = (long) WORD_SIZE - 1L;
 static const long not_alignmask = ~((long) WORD_SIZE - 1L);
 
 /* source addr points to the *other* process' mem */
-int read_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size_t len) {
-	unsigned char misaligned = (uintptr_t) source_addr & alignmask;
+int read_process_memory_slow(pid_t pid, void* dest_addr, uintptr_t source_addr, size_t len) {
+	unsigned char misaligned = source_addr & alignmask;
 	unsigned char* out = dest_addr;
-	unsigned char* src = source_addr;
+	uintptr_t src = source_addr;
 	long read_buf;
 	unsigned i, chunksize;
 	errno = 0;
 	if(misaligned) {
-		read_buf = ptrace(PTRACE_PEEKDATA, pid, (uintptr_t) source_addr & (~(alignmask)), NULL);
+		read_buf = ptrace(PTRACE_PEEKDATA, pid, source_addr & (~(alignmask)), NULL);
 		if(errno) {
 			peek_err:
 			perror("ptrace_peekdata");
@@ -666,10 +666,10 @@ int read_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size
 
 
 /* source addr points to the *our* process' mem */
-int write_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, size_t len) {
-	unsigned char misaligned = (uintptr_t) dest_addr & alignmask;
-	unsigned char* base_addr;
-	unsigned char* dst = dest_addr;
+int write_process_memory_slow(pid_t pid, uintptr_t dest_addr, void* source_addr, size_t len) {
+	unsigned char misaligned = dest_addr & alignmask;
+	uintptr_t base_addr;
+	uintptr_t dst = dest_addr;
 	unsigned char* src = source_addr;
 	union {
 		long l;
@@ -678,7 +678,7 @@ int write_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, siz
 	unsigned i, chunksize;
 	errno = 0;
 	if(misaligned) {
-		base_addr = (void*) ((uintptr_t) dest_addr & not_alignmask);
+		base_addr = (dest_addr & not_alignmask);
 		read_buf.l = ptrace(PTRACE_PEEKDATA, pid, base_addr, NULL);
 		if(errno) {
 			peek_err:
@@ -695,7 +695,7 @@ int write_process_memory_slow(pid_t pid, void* dest_addr, void* source_addr, siz
 			perror("ptrace_pokedata");
 			goto ret_0;
 		}
-		dst = (unsigned char*) ((uintptr_t) base_addr + WORD_SIZE);
+		dst = (base_addr + WORD_SIZE);
 	}
 
 	while(len) {
