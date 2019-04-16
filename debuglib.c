@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -102,6 +103,8 @@ ssize_t debugger_pidindex_from_pid(debugger_state* d, pid_t pid) {
 	sblist_iter_counter(d->pids, i, ret) {
 		if(ret->pid == pid) return i;
 	}
+	dprintf(2, "error: could not find pid %d\n", pid);
+	assert(0);
 	return -1;
 }
 
