@@ -1,4 +1,5 @@
 #include "../debuglib.h"
+#include <assert.h>
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -84,7 +85,7 @@ static void child_stats(debugger_state* d) {
 	vprintf(2, buf);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
 	if (argc < 3) return usage(argv[0]);
 	FILE *f = stdout;
 	if(strcmp(argv[1], "-")) {
@@ -114,17 +115,18 @@ int main(int argc, char** argv) {
 	debugger_event de;
 
 	size_t childcount = 1;
-	size_t c;
 
 	debugger_state_init(d);
 
-	if((c = debugger_exec(d, progbuf, &argv[2], environ)) == (size_t) -1) {
+	argv[2] = progbuf;
+
+	if((child = debugger_exec(d, progbuf, argv+2, environ)) == (size_t) -1) {
 		dprintf(2, "failed to launch debuggee\n");
 		return 1;
 	}
 
-	vprintf(2, "child pid %d\n", debugger_pid_from_pidindex(d, c));
-	if(!debugger_wait_syscall(d, c)) return 1;
+	vprintf(2, "child pid %d\n",  child);
+	if(!debugger_wait_syscall(d, child, 0)) return 1;
 
 	int blocking_io = 1;
 	size_t childs_alive;
@@ -134,9 +136,7 @@ mainloop:;
 		if(!blocking_io) usleep(10);
 		child = -1; /* set pid to -1 so all childs are queried */
 		de = debugger_get_events(d, &child, &retval, blocking_io);
-		c = debugger_pidindex_from_pid(d, child);
-//		child = debugger_pid_from_pidindex(d, c);
-		if(c == -1) continue;
+		assert(child != -1);
 		//de = debugger_get_events(d, c, &retval, 0);
 		if(de == DE_NONE) {
 			if(!blocking_io) usleep(100000);
@@ -147,7 +147,7 @@ mainloop:;
 				child_stats(d);
 				vprintf(2, "[%.5d] DE: %s [%d -> %s]\n", child, debugger_get_event_name(de), retval, get_signal_name(retval));
 				//debugger_continue(d, c);
-				debugger_wait_syscall_pid(d, child, retval);
+				debugger_wait_syscall(d, child, retval);
 				continue;
 			}
 			else if(!(de == DE_SYSCALL_ENTER || de == DE_SYSCALL_RETURN)) {
@@ -156,7 +156,7 @@ mainloop:;
 
 
 			if(de == DE_SYSCALL_ENTER || de == DE_SYSCALL_RETURN) {
-				long sc = debugger_get_syscall_number(d, c);
+				long sc = debugger_get_syscall_number(d, child);
 				int skip_wait = 0;
 				switch(sc) {
 				/* do not print debug info about uninteresting syscalls */
@@ -164,10 +164,13 @@ mainloop:;
 				case SYS_brk: case SYS_fcntl: case SYS_uname: case SYS_getppid:
 				case SYS_setuid: case SYS_futex: case SYS_getgid: case SYS_setgid:
 				case SYS_set_tid_address: case SYS_gettid: case SYS_getuid:
+				case SYS_prlimit64: case SYS_mprotect: case SYS_fstat: case SYS_mmap:
+				case SYS_munmap: case SYS_writev: case SYS_close: case SYS_unlink:
+				case SYS_lseek:
 					break;
 				default:
 					child_stats(d);
-					vprintf(2, "[%.5d] %s: %s (#%ld) (proc %zu)\n", child, de == DE_SYSCALL_ENTER ? "ENTER" : "RETURN", syscall_get_name(sc), sc, c);
+					vprintf(2, "[%.5d] %s: %s (#%ld)\n", child, de == DE_SYSCALL_ENTER ? "ENTER" : "RETURN", syscall_get_name(sc), sc);
 				}
 				if(debugmode &&
 					de == DE_SYSCALL_ENTER &&
@@ -176,60 +179,54 @@ mainloop:;
 					/* interesting syscalls */
 					int i;
 					for(i = 1; i <= syscall_get_argcount(sc); i++) {
-						long arg = debugger_get_syscall_arg(d, c, i);
+						long arg = debugger_get_syscall_arg(d, child, i);
 						vprintf(2, "arg %d : %p\n", i, (void*) arg);
 					}
 				}
 				if(de == DE_SYSCALL_ENTER) switch(sc) {
-					case SYS_execve: case SYS_stat: {
+					case SYS_execve: case SYS_stat: case SYS_access: {
 						char path[512];
-						read_process_string(child, path, sizeof path, debugger_get_syscall_arg(d, c, 1));
+						read_process_string(child, path, sizeof path, debugger_get_syscall_arg(d, child, 1));
 						vprintf(2, "%s: %s\n", syscall_get_name(sc), path);
 					} break;
 					case SYS_open: {
 						char fnbuf[512];
-						read_process_string(child, fnbuf, sizeof fnbuf, debugger_get_syscall_arg(d, c, 1));
+						read_process_string(child, fnbuf, sizeof fnbuf, debugger_get_syscall_arg(d, child, 1));
 						fprintf(f, "%s\n", fnbuf);
 						vprintf(2, "%s: %s\n", syscall_get_name(sc), fnbuf);
 					} break;
 					case SYS_wait4: {
 						skip_wait = 0;
-						if(skip_wait) debugger_continue(d, c);
+						if(skip_wait) debugger_continue(d, child);
 					} break;
 				}
 				if(!skip_wait) {
-					if(!debugger_wait_syscall(d, c)) return 1;
+					if(!debugger_wait_syscall(d, child, 0)) return 1;
 				}
-			} else if (de == DE_EXIT || de == DE_VFORK_DONE) {
+			} else if (de == DE_VFORK_DONE) {
+				vprintf(2, "got vfork_done, from %d, ret %d\n", child, retval);
+				if(!debugger_wait_syscall(d, child, 0)) return 1;
+			} else if (de == DE_EXIT) {
 				vprintf(2, "got %s from %d, return val %d, exit status %d\n", debugger_get_event_name(de), (int) child, retval, WEXITSTATUS(retval));
-				debugger_continue(d, c);
-				//debugger_detach(d, c);
+				debugger_continue(d, child);
 				debugger_remove_pid(d, child);
-				//debugger_set_pid(d, c, -1);
 				goto mainloop;
 			} else if (de == DE_CLONE || de == DE_VFORK || de == DE_FORK) {
 				//debugger_attach(d, retval);
 				debugger_add_pid(d, retval);
 				childcount = debugger_get_pidcount(d);
 				vprintf(2, "got clone, childcount: %zu, lwp pid = %d\n", childcount, retval);
-				do {
-					usleep(10); /* we need to sleep for a tiny amount, otherwise PTRACE_SYSCALL
-				              will fail with "no such process" */
-					if(!debugger_wait_syscall_pid(d, retval, 0)) {
-						if(errno != ESRCH) return 1;
-					} else break;
-				} while(errno == ESRCH);
-				//usleep(1);
-				if(!debugger_wait_syscall_pid(d, child, 0)) return 1;
+				if(!debugger_wait_syscall_retry(d, retval, 0)) {
+					dprintf(2, "unexpected\n");
+					return 1;
+				}
+				if(!debugger_wait_syscall(d, child, 0)) return 1;
 			} else if (de == DE_EXEC) {
-				vprintf(2, "got exec from child #%zu (pid: %d), pid %d\n", c, child, retval);
-				do {
-					usleep(10);
-					if(!debugger_wait_syscall(d, c)) {
-						dprintf(2, "unexpected\n");
-						if (errno != ESRCH) return 1;
-					} else break;
-				} while(errno == ESRCH);
+				vprintf(2, "got exec from child (pid: %d), pid %d\n", child, retval);
+				if(!debugger_wait_syscall_retry(d, child, 0)) {
+					dprintf(2, "unexpected\n");
+					return 1;
+				}
 				//if(!debugger_wait_syscall(d, debugger_pidindex_from_pid(d, retval))) return 1;
 				//debugger_continue(d, c);
 			}
