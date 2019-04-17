@@ -4,27 +4,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../lib/include/strlib.h"
 
 void process_maps_perms_str(unsigned char perms, char* outbuf5) {
 	unsigned i = 0;
-	if(perms & MDP_R) 
+	if(perms & MDP_R)
 		outbuf5[i++] = 'r';
-	else 
+	else
 		outbuf5[i++] = '-';
-	if(perms & MDP_W) 
+	if(perms & MDP_W)
 		outbuf5[i++] = 'w';
-	else 
+	else
 		outbuf5[i++] = '-';
-	if(perms & MDP_X) 
+	if(perms & MDP_X)
 		outbuf5[i++] = 'x';
-	else 
+	else
 		outbuf5[i++] = '-';
-	if(perms & MDP_P) 
+	if(perms & MDP_P)
 		outbuf5[i++] = 'p';
-	else if(perms & MDP_S) 
+	else if(perms & MDP_S)
 		outbuf5[i++] = 's';
-	else 
+	else
 		outbuf5[i++] = '-';
 	outbuf5[i] = 0;
 }
@@ -44,18 +43,18 @@ map_data* find_map_for_addr(sblist* maps, void* addr) {
 
 sblist* process_maps_get(pid_t pid) {
 	char fnbuf[64];
-	char linebuf[4096 + 1024]; 
+	char linebuf[4096 + 1024];
 	sblist* result;
 	map_data current;
 	char *p, *p2;
-	
+
 	snprintf(fnbuf, sizeof(fnbuf), "/proc/%d/maps", (int) pid);
 	FILE* f = fopen(fnbuf, "r");
 	if(!f) {
 		perror("fopen");
 		return NULL;
 	}
-	
+
 	result = sblist_new(sizeof(map_data), 16);
 	while((p = fgets(linebuf, sizeof(linebuf), f))) {
 		memset(&current, 0, sizeof(map_data));
