@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
 
 	debugger_state_init(d);
 
-	argv[1] = progbuf;
+	argv[progname_arg] = progbuf;
 
 	if((child = debugger_exec(d, progbuf, argv+progname_arg, environ)) == (size_t) -1) {
 		dprintf(2, "failed to launch debuggee\n");
