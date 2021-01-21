@@ -70,6 +70,8 @@ long debugger_get_syscall_number(debugger_state* state, pid_t pid);
 long debugger_get_syscall_arg(debugger_state *d, pid_t pid, int argno);
 void debugger_set_syscall_arg(debugger_state *d, pid_t pid, int argno, unsigned long nu);
 void debugger_set_syscall_number(debugger_state * state, pid_t pid, long scnr);
+long debugger_get_syscall_ret(debugger_state *d, pid_t pid);
+void debugger_set_syscall_ret(debugger_state *d, pid_t pid, unsigned long nu);
 int debugger_single_step(debugger_state* state, pid_t pid);
 int debugger_continue(debugger_state *state, pid_t pid);
 /* pid is an in-out pointer: when calling the function pass either -1 to get results from all

@@ -44,6 +44,7 @@
 # define ARCH_SYSCALL_ARG4 esi
 # define ARCH_SYSCALL_ARG5 edi
 # define ARCH_SYSCALL_ARG6 ebp
+# define ARCH_SYSCALL_RET_REG eax
 
 #elif (ARCH == ARCH_AMD64)
 # define ARCH_IP RIP
@@ -56,6 +57,7 @@
 # define ARCH_SYSCALL_ARG4 r10
 # define ARCH_SYSCALL_ARG5 r8
 # define ARCH_SYSCALL_ARG6 r9
+# define ARCH_SYSCALL_RET_REG rax
 
 #else
 # error this platform is not supported yet. feel free to send patches.
@@ -389,6 +391,31 @@ void debugger_set_syscall_arg(debugger_state *d, pid_t pid, int argno, unsigned 
 			dprintf(2, "error: invalid number of syscall args\n");
 			return;
 	}
+
+	if(ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1) {
+		perror(__FUNCTION__);
+		return;
+	}
+}
+
+long debugger_get_syscall_ret(debugger_state *d, pid_t pid) {
+	struct user_regs_struct regs;
+	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
+		perror(__FUNCTION__);
+		return -1;
+	}
+
+	return regs.ARCH_SYSCALL_RET_REG;
+}
+
+void debugger_set_syscall_ret(debugger_state *d, pid_t pid, unsigned long nu) {
+	struct user_regs_struct regs;
+	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
+		perror(__FUNCTION__);
+		return;
+	}
+
+	regs.ARCH_SYSCALL_RET_REG = nu;
 
 	if(ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1) {
 		perror(__FUNCTION__);
