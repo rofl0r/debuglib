@@ -278,7 +278,7 @@ int debugger_attach(debugger_state *d, pid_t pid) {
 }
 
 int debugger_detach(debugger_state *d, pid_t pid) {
-	if(ptrace(PTRACE_ATTACH, pid, NULL, NULL) == -1) {
+	if(ptrace(PTRACE_DETACH, pid, NULL, NULL) == -1) {
 		perror("ptrace detach");
 		return 0;
 	}
