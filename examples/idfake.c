@@ -157,6 +157,8 @@ int main(int argc, char* argv[]) {
 			}
 
 			if(de == DE_SYSCALL_ENTER) switch (sc) {
+				case SYS_fchown:
+				case SYS_fchownat:
 				case SYS_setgroups:
 				case SYS_setresgid:
 				case SYS_setresuid:
@@ -166,6 +168,8 @@ int main(int argc, char* argv[]) {
 			}
 
 			if(de == DE_SYSCALL_RETURN) switch(sc) {
+				case -SYS_fchown:
+				case -SYS_fchownat:
 				case -SYS_setgroups:
 				case -SYS_setresgid:
 				case -SYS_setresuid:
