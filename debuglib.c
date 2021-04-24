@@ -80,7 +80,12 @@ const char event_strings[DE_MAX][20] = {
 	[DE_EXEC] = "DE_EXEC",
 	[DE_SIGNAL] = "DE_SIGNAL",
 	[DE_EXITED] = "DE_EXITED",
+	[DE_KILLED] = "DE_KILLED",
 };
+
+static void perror_pid(const char *emsg, pid_t pid) {
+	dprintf(2, "error: %s (pid %d): %m\n", emsg, (int) pid);
+}
 
 const char* debugger_get_event_name(debugger_event de) {
 	return event_strings[de];
@@ -193,7 +198,7 @@ static uintptr_t get_instruction_pointer(pid_t pid) {
 	errno = 0;
 	ret = ptrace(PTRACE_PEEKUSER, pid, WORD_SIZE * ARCH_IP, NULL);
 	if(errno) {
-		perror("ptrace_peekuser");
+		perror_pid("ptrace_peekuser", pid);
 		return 0;
 	}
 	return ret;
@@ -209,7 +214,7 @@ static int set_instruction_pointer(pid_t pid, uintptr_t addr) {
 	long ret;
 	ret = ptrace(PTRACE_POKEUSER, pid, WORD_SIZE * ARCH_IP, addr);
 	if(ret == -1) {
-		perror("ptrace_pokeuser");
+		perror_pid("ptrace_pokeuser", pid);
 		return 0;
 	}
 	return 1;
@@ -218,6 +223,10 @@ static int set_instruction_pointer(pid_t pid, uintptr_t addr) {
 int debugger_set_ip(debugger_state* d, pid_t pid, uintptr_t addr) {
 	return set_instruction_pointer(pid, addr);
 }
+
+#ifndef PTRACE_O_EXITKILL
+#define PTRACE_O_EXITKILL 0
+#endif
 
 static int set_debug_options(pid_t pid) {
 	long options = 0L
@@ -228,10 +237,11 @@ static int set_debug_options(pid_t pid) {
 	          | PTRACE_O_TRACECLONE
 	          | PTRACE_O_TRACEVFORKDONE
 	          | PTRACE_O_TRACESYSGOOD
+		  | PTRACE_O_EXITKILL
 	          ;
 
 	if(ptrace(PTRACE_SETOPTIONS, pid, NULL, options) == -1) {
-		perror("ptrace_setoptions");
+		perror_pid("ptrace_setoptions", pid);
 		return 0;
 	}
 	return 1;
@@ -270,7 +280,7 @@ void debugger_set_pid(debugger_state *d, size_t pidindex, pid_t pid) {
 
 int debugger_attach(debugger_state *d, pid_t pid) {
 	if(ptrace(PTRACE_ATTACH, pid, NULL, NULL) == -1) {
-		perror("ptrace attach");
+		perror_pid("ptrace attach", pid);
 		return 0;
 	}
 	debugger_add_pid(d, pid);
@@ -279,7 +289,7 @@ int debugger_attach(debugger_state *d, pid_t pid) {
 
 int debugger_detach(debugger_state *d, pid_t pid) {
 	if(ptrace(PTRACE_DETACH, pid, NULL, NULL) == -1) {
-		perror("ptrace detach");
+		perror_pid("ptrace detach", pid);
 		return 0;
 	}
 	debugger_remove_pid(d, pid);
@@ -313,8 +323,7 @@ pid_t debugger_exec(debugger_state* d, const char* path, char *const args[], cha
 int debugger_wait_syscall(debugger_state* d, pid_t pid, int sig) {
 	if(ptrace(PTRACE_SYSCALL, pid, 0, sig) == -1) {
 #ifdef DEBUG
-		dprintf(2, "ptrace pid %d\n", (int) pid);
-		perror("ptrace_syscall");
+		perror_pid("ptrace_syscall", pid);
 #endif
 		return 0;
 	}
@@ -346,7 +355,7 @@ long debugger_get_syscall_number(debugger_state* d, pid_t pid) {
 #else
 	struct user_regs_struct regs;
 	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return -1;
 	}
 	return regs.ARCH_SYSCALLNR_REG;
@@ -356,7 +365,7 @@ long debugger_get_syscall_number(debugger_state* d, pid_t pid) {
 long debugger_get_syscall_arg(debugger_state *d, pid_t pid, int argno) {
 	struct user_regs_struct regs;
 	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return -1;
 	}
 
@@ -376,7 +385,7 @@ long debugger_get_syscall_arg(debugger_state *d, pid_t pid, int argno) {
 void debugger_set_syscall_arg(debugger_state *d, pid_t pid, int argno, unsigned long nu) {
 	struct user_regs_struct regs;
 	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return;
 	}
 
@@ -393,7 +402,7 @@ void debugger_set_syscall_arg(debugger_state *d, pid_t pid, int argno, unsigned 
 	}
 
 	if(ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return;
 	}
 }
@@ -401,7 +410,7 @@ void debugger_set_syscall_arg(debugger_state *d, pid_t pid, int argno, unsigned 
 long debugger_get_syscall_ret(debugger_state *d, pid_t pid) {
 	struct user_regs_struct regs;
 	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return -1;
 	}
 
@@ -411,14 +420,14 @@ long debugger_get_syscall_ret(debugger_state *d, pid_t pid) {
 void debugger_set_syscall_ret(debugger_state *d, pid_t pid, unsigned long nu) {
 	struct user_regs_struct regs;
 	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return;
 	}
 
 	regs.ARCH_SYSCALL_RET_REG = nu;
 
 	if(ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return;
 	}
 }
@@ -426,19 +435,19 @@ void debugger_set_syscall_ret(debugger_state *d, pid_t pid, unsigned long nu) {
 void debugger_set_syscall_number(debugger_state * d, pid_t pid, long scnr) {
 	struct user_regs_struct regs;
 	if(ptrace(PTRACE_GETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 		return;
 	}
 	regs.ARCH_SYSCALLNR_REG = scnr;
 	if(ptrace(PTRACE_SETREGS, pid, 0, &regs) == -1) {
-		perror(__FUNCTION__);
+		perror_pid(__FUNCTION__, pid);
 	}
 	return;
 }
 
 static int single_step(pid_t pid) {
 	if(ptrace(PTRACE_SINGLESTEP, pid, NULL, NULL) == -1) {
-		perror("ptrace_singlestep");
+		perror_pid("ptrace_singlestep", pid);
 		return 0;
 	}
 	return 1;
@@ -465,7 +474,7 @@ int debugger_single_step(debugger_state* d, pid_t pid) {
 	return ret;
 }
 
-int debugger_continue(debugger_state *d, pid_t pid) {
+int debugger_continue_signal(debugger_state *d, pid_t pid, long sig) {
 	size_t pidindex = debugger_pidindex_from_pid(d, pid);
 	pidinfo *pi = get_pidinfo(d, pidindex);
 	breakpointinfo *bp;
@@ -487,12 +496,17 @@ int debugger_continue(debugger_state *d, pid_t pid) {
 			debugger_single_step(d, pid);
 		}
 	}
-	if(ptrace(PTRACE_CONT, pid, NULL, NULL) == -1) {
-		perror("ptrace_cont");
+	if(ptrace(PTRACE_CONT, pid, NULL, sig) == -1) {
+		perror_pid("ptrace_cont", pid);
 		return 0;
 	}
 	return 1;
 }
+
+int debugger_continue(debugger_state *d, pid_t pid) {
+	return debugger_continue_signal(d, pid, 0);
+}
+
 
 static const debugger_event event_translate_tbl[] = {
 	[PTRACE_EVENT_EXIT] = DE_EXIT,
@@ -514,6 +528,7 @@ static debugger_event translate_event(pidinfo* state, int event) {
 		state->syscall_ret = ~state->syscall_ret;
 		return res;
 	}
+	int orig_event = event;
 	event >>= 8;
 	switch(event) {
 		case PTRACE_EVENT_EXIT:
@@ -524,6 +539,7 @@ static debugger_event translate_event(pidinfo* state, int event) {
 		case PTRACE_EVENT_EXEC:
 			return event_translate_tbl[event];
 		default:
+			dprintf(2, "got unknown event %d (%d)\n", event, orig_event);
 			break;
 	}
 	return DE_NONE;
@@ -549,7 +565,7 @@ debugger_event debugger_get_events(debugger_state* d, pid_t *pid, int* retval, i
 		//	res = DE_EXIT;
 		//else
 			dprintf(2, "wp error ret %d, pid %d\n", ret, (int) *pid);
-			perror("waitpid");
+			perror_pid("waitpid", *pid);
 			return DE_NONE;
 	} else {
 		*pid = ret;
@@ -564,11 +580,17 @@ debugger_event debugger_get_events(debugger_state* d, pid_t *pid, int* retval, i
 					*retval = WEXITSTATUS(*retval);
 					return DE_EXITED;
 				}
-				perror("ptrace_geteventmsg");
+				if(WIFSIGNALED(*retval) && !have_pidindex(d, *pid)) {
+					*retval = WTERMSIG(*retval);
+					return DE_KILLED;
+				}
+				perror_pid("ptrace_geteventmsg", *pid);
 			}
 
 			if(ptrace(PTRACE_GETSIGINFO, *pid, NULL, &sig_data) == -1) {
-				perror("ptrace_getsiginfo");
+				if(WIFSTOPPED(*retval))
+					return DE_STOPPED;
+				perror_pid("ptrace_getsiginfo", *pid);
 				return res;
 			}
 			//dprintf(2, "waitpid retval %d\n", *retval);
@@ -592,6 +614,9 @@ debugger_event debugger_get_events(debugger_state* d, pid_t *pid, int* retval, i
 							return DE_HIT_BP;
 						}
 					}
+					// FIXME: after single_step(), an event is sent that, applying below bit tricks,
+					// sends 0 to translate_event. we should save whether single_step is used and then
+					// return an appropriate event number.
 
 					//if((res = translate_event(state, ((*retval & (~(SIGTRAP)) ) >> 8))))
 					if((res = translate_event(pi, (*retval >> 8) & (~SIGTRAP)))) {
@@ -669,7 +694,7 @@ int read_process_memory_slow(pid_t pid, void* dest_addr, uintptr_t source_addr, 
 		read_buf = ptrace(PTRACE_PEEKDATA, pid, source_addr & (~(alignmask)), NULL);
 		if(errno) {
 			peek_err:
-			perror("ptrace_peekdata");
+			perror_pid("ptrace_peekdata", pid);
 			return 0;
 		}
 		for(i = misaligned; len && i < WORD_SIZE; i++) {
@@ -709,7 +734,7 @@ int write_process_memory_slow(pid_t pid, uintptr_t dest_addr, void* source_addr,
 		read_buf.l = ptrace(PTRACE_PEEKDATA, pid, base_addr, NULL);
 		if(errno) {
 			peek_err:
-			perror("ptrace_peekdata");
+			perror_pid("ptrace_peekdata", pid);
 			ret_0:
 			return 0;
 		}
@@ -719,7 +744,7 @@ int write_process_memory_slow(pid_t pid, uintptr_t dest_addr, void* source_addr,
 		}
 		if(ptrace(PTRACE_POKEDATA, pid, base_addr, read_buf.l) == -1) {
 			pokemon:
-			perror("ptrace_pokedata");
+			perror_pid("ptrace_pokedata", pid);
 			goto ret_0;
 		}
 		dst = (base_addr + WORD_SIZE);

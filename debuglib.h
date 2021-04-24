@@ -42,7 +42,11 @@ typedef enum {
 	DE_SYSCALL_RETURN,
 	DE_EXEC,
 	DE_SIGNAL,
-	DE_EXITED, /* custom notification when the process is done exiting. exitstatus is returned directly */
+	DE_EXITED, /* custom notification when the process is done exiting.
+		      exitstatus is returned directly, you don't have to handle this,
+		      as DE_EXIT was already returned earlier. */
+	DE_KILLED, /* process was killed. like DE_EXITED, is only informative. no need to handle. */
+	DE_STOPPED, /* process/thread was stopped (probably with an earlier SIGSTOP */
 	DE_MAX,
 } debugger_event;
 
@@ -73,6 +77,7 @@ void debugger_set_syscall_number(debugger_state * state, pid_t pid, long scnr);
 long debugger_get_syscall_ret(debugger_state *d, pid_t pid);
 void debugger_set_syscall_ret(debugger_state *d, pid_t pid, unsigned long nu);
 int debugger_single_step(debugger_state* state, pid_t pid);
+int debugger_continue_signal(debugger_state *d, pid_t pid, long sig);
 int debugger_continue(debugger_state *state, pid_t pid);
 /* pid is an in-out pointer: when calling the function pass either -1 to get results from all
    childs, or the pid of the process you wanna trace. on return, it will contain the pid
