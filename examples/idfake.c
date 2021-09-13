@@ -163,6 +163,7 @@ int main(int argc, char* argv[]) {
 				case SYS_setresgid:
 				case SYS_setresuid:
 				case SYS_chown:
+				case SYS_lchown:
 				debugger_set_syscall_number(d, child, -sc);
 				break;
 			}
@@ -174,6 +175,7 @@ int main(int argc, char* argv[]) {
 				case -SYS_setresgid:
 				case -SYS_setresuid:
 				case -SYS_chown:
+				case -SYS_lchown:
 				debugger_set_syscall_ret(d, child, 0);
 				break;
 			}
