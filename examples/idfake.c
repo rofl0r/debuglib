@@ -1,7 +1,9 @@
 /*
 
 this program hooks syscalls
-SYS_setgroups, SYS_setresgid, SYS_setresuid, and SYS_chown.
+SYS_setgroups, SYS_setresgid, SYS_setresuid, and SYS_chown,
+and related things in order to be able to use processes
+in a usernamespace rootfs as "virtual root".
 
 since we can't just stop an entered syscall from executing,
 we modify the syscall nr to something inexistent, in this
