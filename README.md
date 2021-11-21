@@ -39,3 +39,27 @@ How to build the filetracer example program
 	cd debuglib/tests
 	rcb2 filetrace.c
 
+Known bugs:
+-----------
+there are 2 ways to use the ptrace(2) api: the old method is using
+`PTRACE_ATTACH`, this is what the library currently uses.
+it has one major problem, which is the inability to properly deal with
+`SIGSTOP`/`SIGTSTP` received by a child when tracing.
+therefore a new API was designed that uses `PTRACE_SEIZE` instead.
+i was unaware of the issue when designing this library and using the new
+seize API instead would require a major rewrite, and more costly, re-test
+of all the functionality.
+fortunately processes sending SIGSTOP to subprocesses occur quite rarely,
+so the issue is encountered only in rare cases.
+the issue can be reproduced by creating a shell script with the content
+
+    msgmerge --update -q /dev/null /dev/null
+
+on debian sid i386 at the time of this writing, and then executing
+
+    DEBUG=1 idfake sh foo.sh
+
+using the supplied idfake example program.
+This result in the program hanging forever.
+the rather well-known program `proot` is victim to the same design issue.
+recent versions of `strace` otoh use the new seize API when available.
