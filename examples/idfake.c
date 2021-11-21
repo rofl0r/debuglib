@@ -164,6 +164,14 @@ int main(int argc, char* argv[]) {
 				case SYS_setresuid:
 				case SYS_chown:
 				case SYS_lchown:
+#ifdef SYS_fchown32
+				case SYS_fchown32:
+				case SYS_setgroups32:
+				case SYS_setresgid32:
+				case SYS_setresuid32:
+				case SYS_chown32:
+				case SYS_lchown32:
+#endif
 				debugger_set_syscall_number(d, child, -sc);
 				break;
 			}
@@ -176,6 +184,14 @@ int main(int argc, char* argv[]) {
 				case -SYS_setresuid:
 				case -SYS_chown:
 				case -SYS_lchown:
+#ifdef SYS_fchown32
+				case -SYS_fchown32:
+				case -SYS_setgroups32:
+				case -SYS_setresgid32:
+				case -SYS_setresuid32:
+				case -SYS_chown32:
+				case -SYS_lchown32:
+#endif
 				debugger_set_syscall_ret(d, child, 0);
 				break;
 			}
