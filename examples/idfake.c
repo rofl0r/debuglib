@@ -176,6 +176,15 @@ int main(int argc, char* argv[]) {
 #endif
 				debugger_set_syscall_number(d, child, -sc);
 				break;
+				case SYS_setxattr: {
+				char aname[512];
+				read_process_string(child, aname, sizeof aname, debugger_get_syscall_arg(d, child, 2));
+				if(!strcmp(aname, "system.posix_acl_access") ||
+				   !strcmp(aname, "system.posix_acl_default")
+				)
+					debugger_set_syscall_number(d, child, -sc);
+				}
+
 			}
 
 			if(de == DE_SYSCALL_RETURN) switch(sc) {
@@ -186,6 +195,7 @@ int main(int argc, char* argv[]) {
 				case -SYS_setresuid:
 				case -SYS_chown:
 				case -SYS_lchown:
+				case -SYS_setxattr:
 #ifdef SYS_fchown32
 				case -SYS_fchown32:
 				case -SYS_setgroups32:
