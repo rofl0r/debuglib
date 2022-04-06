@@ -78,6 +78,10 @@ static int read_process_string(pid_t pid, char *buf, size_t bufsize, uintptr_t s
 	return -1; /* string truncated */
 }
 
+static int errno_range(long ret) {
+	return ret < 0L && ret > -4096UL;
+}
+
 static int debugmode;
 #define vprintf(...) do { if(debugmode) dprintf(__VA_ARGS__); } while(0)
 
@@ -155,7 +159,15 @@ int main(int argc, char* argv[]) {
 
 		case DE_SYSCALL_ENTER: case DE_SYSCALL_RETURN: {
 			long sc = debugger_get_syscall_number(d, child);
-			vprintf(2, "[%.5d] %s: %s (#%ld)\n", child, de == DE_SYSCALL_ENTER ? "ENTER" : "RETURN", syscall_get_name(sc), sc);
+			long ret = (de == DE_SYSCALL_ENTER) ? 0 : debugger_get_syscall_ret(d, child);
+			if(de == DE_SYSCALL_ENTER)
+				vprintf(2, "[%.5d] %s: %s (#%ld)\n", child, "ENTER", syscall_get_name(sc), sc);
+			else {
+				char ret_buf[64];
+				if(!ret || errno_range(ret)) snprintf(ret_buf, sizeof ret_buf, "%ld", ret);
+				else snprintf(ret_buf, sizeof ret_buf, "0x%lx", ret);
+				vprintf(2, "[%.5d] %s: %s (#%ld) RET: %s (%s)\n", child, "RETURN", syscall_get_name(sc), sc, ret_buf, errno_range(ret) ? strerror(-ret) : "SUCCESS");
+			}
 			int i;
 			for(i = 1; i <= syscall_get_argcount(sc); i++) {
 				long arg = debugger_get_syscall_arg(d, child, i);
