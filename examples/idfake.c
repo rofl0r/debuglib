@@ -46,6 +46,10 @@ extern char** environ;
 static int search_path_bin(const char *bin, char *buf, size_t buflen) {
 	char *p = getenv("PATH"), *o;
 	size_t l;
+	if(!p) {
+		dprintf(2, "warning: environment variable PATH isn't exported\n");
+		return 0;
+	}
 	for(;;) {
 		o = buf;
 		l = buflen;
